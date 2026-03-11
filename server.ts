@@ -71,6 +71,43 @@ app.post("/api/login", (req, res) => {
   }
 });
 
+// Users API
+app.get("/api/users", (req, res) => {
+  const users = db.prepare("SELECT id, username, role FROM users").all();
+  res.json(users);
+});
+
+app.post("/api/users", (req, res) => {
+  const { username, password, role } = req.body;
+  try {
+    const result = db.prepare("INSERT INTO users (username, password, role) VALUES (?, ?, ?)").run(username, password, role || 'user');
+    res.json({ id: result.lastInsertRowid });
+  } catch (e) {
+    res.status(400).json({ error: "اسم المستخدم موجود مسبقاً" });
+  }
+});
+
+app.put("/api/users/:id", (req, res) => {
+  const { username, password, role } = req.body;
+  if (password) {
+    db.prepare("UPDATE users SET username = ?, password = ?, role = ? WHERE id = ?").run(username, password, role, req.params.id);
+  } else {
+    db.prepare("UPDATE users SET username = ?, role = ? WHERE id = ?").run(username, role, req.params.id);
+  }
+  res.json({ success: true });
+});
+
+app.delete("/api/users/:id", (req, res) => {
+  db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+  res.json({ success: true });
+});
+
+app.post("/api/change-password", (req, res) => {
+  const { userId, newPassword } = req.body;
+  db.prepare("UPDATE users SET password = ? WHERE id = ?").run(newPassword, userId);
+  res.json({ success: true });
+});
+
 // Schools API
 app.get("/api/schools", (req, res) => {
   const schools = db.prepare("SELECT * FROM schools").all();

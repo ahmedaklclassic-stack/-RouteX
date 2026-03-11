@@ -22,7 +22,9 @@ import {
   AlertCircle,
   CheckCircle2,
   Printer,
-  ShieldCheck
+  ShieldCheck,
+  Key,
+  UserPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -129,6 +131,7 @@ export default function App() {
   const [schools, setSchools] = useState<School[]>([]);
   const [inspectors, setInspectors] = useState<Inspector[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [licenseStatus, setLicenseStatus] = useState<{ active: boolean, expiryDate?: string } | null>(null);
   const [licenseWarning, setLicenseWarning] = useState<string | null>(null);
@@ -139,10 +142,12 @@ export default function App() {
   const [schoolForm, setSchoolForm] = useState<Partial<School>>({});
   const [inspectorForm, setInspectorForm] = useState<Partial<Inspector>>({});
   const [routeForm, setRouteForm] = useState<Partial<Route>>({});
+  const [userForm, setUserForm] = useState<{ username: '', password: '', role: 'user' }>({ username: '', password: '', role: 'user' });
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalType, setModalType] = useState<'school' | 'inspector' | 'route' | 'license' | 'restore'>('school');
+  const [modalType, setModalType] = useState<'school' | 'inspector' | 'route' | 'license' | 'restore' | 'user' | 'password'>('school');
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, type: 'schools' | 'inspectors' | 'routes' | null, id: number | null }>({
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, type: 'schools' | 'inspectors' | 'routes' | 'users' | null, id: number | null }>({
     isOpen: false,
     type: null,
     id: null
@@ -155,6 +160,8 @@ export default function App() {
     inspectorId: '',
     schoolId: '',
     search: '',
+    schoolSearch: '',
+    schoolStage: 'all',
     inspectorStatus: 'all',
     specialization: 'all'
   });
@@ -201,14 +208,16 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [sRes, iRes, rRes] = await Promise.all([
+      const [sRes, iRes, rRes, uRes] = await Promise.all([
         fetch('/api/schools'),
         fetch('/api/inspectors'),
-        fetch('/api/routes')
+        fetch('/api/routes'),
+        fetch('/api/users')
       ]);
       setSchools(await sRes.json());
       setInspectors(await iRes.json());
       setRoutes(await rRes.json());
+      setUsers(await uRes.json());
     } catch (e) {
       console.error(e);
     } finally {
@@ -254,12 +263,24 @@ export default function App() {
 
   const handleSaveInspector = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Cleanup fields if status is active
+    const finalData = { ...inspectorForm };
+    if (finalData.status === 'active') {
+      delete finalData.disable_reason;
+      delete finalData.leave_start;
+      delete finalData.leave_end;
+    } else if (finalData.disable_reason !== 'أجازة') {
+      delete finalData.leave_start;
+      delete finalData.leave_end;
+    }
+
     const method = editingId ? 'PUT' : 'POST';
     const url = editingId ? `/api/inspectors/${editingId}` : '/api/inspectors';
     await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(inspectorForm)
+      body: JSON.stringify(finalData)
     });
     setIsModalOpen(false);
     fetchData();
@@ -276,7 +297,44 @@ export default function App() {
     fetchData();
   };
 
-  const handleDelete = (type: 'schools' | 'inspectors' | 'routes', id: number) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const method = editingId ? 'PUT' : 'POST';
+    const url = editingId ? `/api/users/${editingId}` : '/api/users';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userForm)
+    });
+    if (res.ok) {
+      setIsModalOpen(false);
+      fetchData();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'حدث خطأ ما');
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      alert('كلمات السر غير متطابقة');
+      return;
+    }
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user?.id, newPassword: passwordForm.newPassword })
+    });
+    if (res.ok) {
+      alert('تم تغيير كلمة السر بنجاح');
+      setIsModalOpen(false);
+    } else {
+      alert('حدث خطأ في تغيير كلمة السر');
+    }
+  };
+
+  const handleDelete = (type: 'schools' | 'inspectors' | 'routes' | 'users', id: number) => {
     setDeleteConfirm({ isOpen: true, type, id });
   };
 
@@ -628,6 +686,14 @@ export default function App() {
           />
           {user.role === 'admin' && (
             <SidebarItem 
+              icon={UserPlus} 
+              label="المستخدمين" 
+              active={activeTab === 'users'} 
+              onClick={() => setActiveTab('users')} 
+            />
+          )}
+          {user.role === 'admin' && (
+            <SidebarItem 
               icon={Settings} 
               label="الإعدادات" 
               active={activeTab === 'settings'} 
@@ -637,6 +703,17 @@ export default function App() {
         </nav>
 
         <div className="pt-6 border-t border-slate-100">
+          <button 
+            onClick={() => {
+              setModalType('password');
+              setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+              setIsModalOpen(true);
+            }}
+            className="w-full flex items-center gap-3 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors font-medium mb-2"
+          >
+            <Key size={20} />
+            <span>تغيير كلمة السر</span>
+          </button>
           <div className="flex items-center gap-3 mb-4 px-2">
             <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold">
               {user.username[0].toUpperCase()}
@@ -806,6 +883,28 @@ export default function App() {
                   <p className="text-slate-500">إضافة وتعديل بيانات المدارس التابعة</p>
                 </div>
                 <div className="flex gap-3">
+                  <div className="relative w-64">
+                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="text"
+                      placeholder="بحث باسم المدرسة..."
+                      className="w-full pr-10 pl-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-700"
+                      value={filters.schoolSearch}
+                      onChange={e => setFilters({ ...filters, schoolSearch: e.target.value })}
+                    />
+                  </div>
+                  <div className="w-48">
+                    <select 
+                      className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-bold text-slate-700"
+                      value={filters.schoolStage}
+                      onChange={e => setFilters({ ...filters, schoolStage: e.target.value })}
+                    >
+                      <option value="all">كل المراحل</option>
+                      {Array.from(new Set(schools.map(s => s.stage))).filter(Boolean).map(stage => (
+                        <option key={stage} value={stage}>{stage}</option>
+                      ))}
+                    </select>
+                  </div>
                   {user.role === 'admin' && (
                     <>
                       <label className="bg-white text-slate-700 px-4 py-2 rounded-xl border border-slate-200 font-bold flex items-center gap-2 cursor-pointer hover:bg-slate-50 transition-colors">
@@ -851,7 +950,13 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {schools.map(school => (
+                      {schools
+                        .filter(school => {
+                          const matchesSearch = school.name.toLowerCase().includes(filters.schoolSearch.toLowerCase());
+                          const matchesStage = filters.schoolStage === 'all' || school.stage === filters.schoolStage;
+                          return matchesSearch && matchesStage;
+                        })
+                        .map(school => (
                         <tr key={school.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-4 font-bold text-slate-800">{school.name}</td>
                           <td className="px-4 py-4 text-slate-600">{school.stage}</td>
@@ -1302,6 +1407,85 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'users' && user.role === 'admin' && (
+            <motion.div 
+              key="users"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="space-y-6"
+            >
+              <header className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-3xl font-bold text-slate-800">إدارة المستخدمين</h1>
+                  <p className="text-slate-500">إضافة وتعديل صلاحيات مستخدمي النظام</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setModalType('user');
+                    setUserForm({ username: '', password: '', role: 'user' });
+                    setEditingId(null);
+                    setIsModalOpen(true);
+                  }}
+                  className="bg-emerald-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 transition-all"
+                >
+                  <Plus size={20} />
+                  <span>إضافة مستخدم</span>
+                </button>
+              </header>
+
+              <Card>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right">
+                    <thead>
+                      <tr className="border-bottom border-slate-100">
+                        <th className="px-4 py-4 text-slate-500 font-bold">اسم المستخدم</th>
+                        <th className="px-4 py-4 text-slate-500 font-bold">الصلاحية</th>
+                        <th className="px-4 py-4 text-slate-500 font-bold">الإجراءات</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {users.map(u => (
+                        <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-4 font-bold text-slate-800">{u.username}</td>
+                          <td className="px-4 py-4">
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                              u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {u.role === 'admin' ? 'مدير نظام' : 'مستخدم عادي'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => {
+                                  setModalType('user');
+                                  setUserForm({ username: u.username, password: '', role: u.role });
+                                  setEditingId(u.id);
+                                  setIsModalOpen(true);
+                                }}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              >
+                                <Edit size={18} />
+                              </button>
+                              {u.username !== 'admin' && (
+                                <button 
+                                  onClick={() => handleDelete('users', u.id)}
+                                  className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                >
+                                  <Trash2 size={18} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div 
               key="settings"
@@ -1382,9 +1566,79 @@ export default function App() {
           modalType === 'school' ? (editingId ? 'تعديل مدرسة' : 'إضافة مدرسة') :
           modalType === 'inspector' ? (editingId ? 'تعديل مفتش' : 'إضافة مفتش') :
           modalType === 'route' ? 'إنشاء خط سير' :
+          modalType === 'user' ? (editingId ? 'تعديل مستخدم' : 'إضافة مستخدم') :
+          modalType === 'password' ? 'تغيير كلمة السر' :
           modalType === 'license' ? 'تنشيط البرنامج' : ''
         }
       >
+        {modalType === 'password' && (
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-1">كلمة السر الجديدة</label>
+              <input 
+                type="password"
+                required
+                className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={passwordForm.newPassword}
+                onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-1">تأكيد كلمة السر</label>
+              <input 
+                type="password"
+                required
+                className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={passwordForm.confirmPassword}
+                onChange={e => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+              />
+            </div>
+            <button className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all">
+              تحديث كلمة السر
+            </button>
+          </form>
+        )}
+
+        {modalType === 'user' && (
+          <form onSubmit={handleSaveUser} className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-1">اسم المستخدم</label>
+              <input 
+                required
+                className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={userForm.username}
+                onChange={e => setUserForm({ ...userForm, username: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-1">
+                {editingId ? 'كلمة السر (اتركها فارغة إذا لم ترد التغيير)' : 'كلمة السر'}
+              </label>
+              <input 
+                type="password"
+                required={!editingId}
+                className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={userForm.password}
+                onChange={e => setUserForm({ ...userForm, password: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-1">الصلاحية</label>
+              <select 
+                className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={userForm.role}
+                onChange={e => setUserForm({ ...userForm, role: e.target.value as any })}
+              >
+                <option value="user">مستخدم عادي</option>
+                <option value="admin">مدير نظام</option>
+              </select>
+            </div>
+            <button className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all">
+              حفظ البيانات
+            </button>
+          </form>
+        )}
+
         {modalType === 'school' && (
           <form onSubmit={handleSaveSchool} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1515,6 +1769,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">سبب التعطيل</label>
                   <select 
+                    required
                     className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                     value={inspectorForm.disable_reason || ''}
                     onChange={e => setInspectorForm({ ...inspectorForm, disable_reason: e.target.value })}
@@ -1531,6 +1786,7 @@ export default function App() {
                       <label className="block text-sm font-bold text-slate-700 mb-1">بداية الأجازة</label>
                       <input 
                         type="date"
+                        required
                         className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                         value={inspectorForm.leave_start || ''}
                         onChange={e => setInspectorForm({ ...inspectorForm, leave_start: e.target.value })}
@@ -1540,6 +1796,7 @@ export default function App() {
                       <label className="block text-sm font-bold text-slate-700 mb-1">نهاية الأجازة</label>
                       <input 
                         type="date"
+                        required
                         className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                         value={inspectorForm.leave_end || ''}
                         onChange={e => setInspectorForm({ ...inspectorForm, leave_end: e.target.value })}
